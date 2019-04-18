@@ -7,3 +7,7 @@ build/
 *.so
 *.json
 
+
+*.*~
+
+deactivate
