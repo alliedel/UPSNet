@@ -15,33 +15,28 @@
 
 from __future__ import print_function
 
+import json
 import os
 import sys
-import torch
-import torch.utils.data
-
-import pickle, gzip
-import numpy as np
-import scipy.io as sio
-import cv2
-import json
-import torch.multiprocessing as multiprocessing
 import time
-from PIL import Image, ImageDraw
 from collections import defaultdict, Sequence
+
+import cv2
+import numpy as np
+import pycocotools.mask as mask_util
+import torch
+import torch.multiprocessing as multiprocessing
+import torch.utils.data
+from PIL import Image, ImageDraw
 from pycocotools.cocoeval import COCOeval
 
-from upsnet.config.config import config
-from upsnet.rpn.assign_anchor import add_rpn_blobs
-from upsnet.bbox import bbox_transform
-from upsnet.bbox.sample_rois import sample_rois
-import networkx as nx
 from lib.utils.logging import logger
-
-import pycocotools.mask as mask_util
+from upsnet.bbox import bbox_transform
+from upsnet.config.config import config
 
 # panoptic visualization
 vis_panoptic = False
+
 
 class PQStatCat():
     def __init__(self):
@@ -89,7 +84,8 @@ class PQStat():
             pq_class = iou / (tp + 0.5 * fp + 0.5 * fn)
             sq_class = iou / tp if tp != 0 else 0
             rq_class = tp / (tp + 0.5 * fp + 0.5 * fn)
-            per_class_results[label] = {'pq': pq_class, 'sq': sq_class, 'rq': rq_class, 'iou': iou, 'tp':tp, 'fp':fp, 'fn':fn}
+            per_class_results[label] = {'pq': pq_class, 'sq': sq_class, 'rq': rq_class, 'iou': iou,
+                                        'tp': tp, 'fp': fp, 'fn': fn}
             pq += pq_class
             sq += sq_class
             rq += rq_class
@@ -122,6 +118,8 @@ class BaseDataset(torch.utils.data.Dataset):
         processed_ims = []
         im_scales = []
         for i in range(num_images):
+            assert os.path.isfile(roidb[i]['image']), \
+                FileNotFoundError('{} does not exist'.format(roidb[i]['image']))
             im = cv2.imread(roidb[i]['image'])
             assert im is not None, \
                 'Failed to read image \'{}\''.format(roidb[i]['image'])
@@ -172,7 +170,6 @@ class BaseDataset(torch.utils.data.Dataset):
             im_scales.append(im_scale)
         return ims, im_scales
 
-
     def evaluate_all(self, all_boxes, all_segms, output_dir):
         all_results = self.evaluate_boxes(all_boxes, output_dir)
         self.evaluate_masks(all_boxes, all_segms, output_dir)
@@ -199,7 +196,8 @@ class BaseDataset(torch.utils.data.Dataset):
         coco_eval = COCOeval(self.dataset.COCO, coco_dt, 'bbox')
         coco_eval.evaluate()
         coco_eval.accumulate()
-        self.log_detection_eval_metrics(coco_eval, os.path.join(output_dir, 'detection_results.txt'))
+        self.log_detection_eval_metrics(coco_eval,
+                                        os.path.join(output_dir, 'detection_results.txt'))
 
         return coco_eval.stats
 
@@ -208,7 +206,9 @@ class BaseDataset(torch.utils.data.Dataset):
 
     def evaluate_panoptic(self, pred_pans_2ch, output_dir):
 
-        sys.path.insert(0, os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', 'lib', 'dataset_devkit'))
+        sys.path.insert(0,
+                        os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', 'lib',
+                                     'dataset_devkit'))
 
         from panopticapi.utils import IdGenerator
 
@@ -225,7 +225,8 @@ class BaseDataset(torch.utils.data.Dataset):
             workers = multiprocessing.Pool(processes=cpu_num)
             processes = []
             for proc_id, files_set in enumerate(files_split):
-                p = workers.apply_async(BaseDataset._load_image_single_core, (proc_id, files_set, pan_gt_folder))
+                p = workers.apply_async(BaseDataset._load_image_single_core,
+                                        (proc_id, files_set, pan_gt_folder))
                 processes.append(p)
             workers.close()
             workers.join()
@@ -246,7 +247,8 @@ class BaseDataset(torch.utils.data.Dataset):
             workers = multiprocessing.Pool(processes=cpu_num)
             processes = []
             for proc_id, pan_2ch_set in enumerate(pan_2ch_split):
-                p = workers.apply_async(BaseDataset._converter_2ch_single_core, (proc_id, pan_2ch_set, color_gererator))
+                p = workers.apply_async(BaseDataset._converter_2ch_single_core,
+                                        (proc_id, pan_2ch_set, color_gererator))
                 processes.append(p)
             workers.close()
             workers.join()
@@ -260,13 +262,17 @@ class BaseDataset(torch.utils.data.Dataset):
 
         def save_image(images, save_folder, gt_json, colors=None):
             os.makedirs(save_folder, exist_ok=True)
-            names = [os.path.join(save_folder, item['file_name'].replace('_leftImg8bit', '').replace('jpg', 'png').replace('jpeg', 'png')) for item in gt_json['images']]
+            names = [os.path.join(save_folder,
+                                  item['file_name'].replace('_leftImg8bit', '').replace('jpg',
+                                                                                        'png').replace(
+                                      'jpeg', 'png')) for item in gt_json['images']]
             cpu_num = multiprocessing.cpu_count()
             images_split = np.array_split(images, cpu_num)
             names_split = np.array_split(names, cpu_num)
             workers = multiprocessing.Pool(processes=cpu_num)
             for proc_id, (images_set, names_set) in enumerate(zip(images_split, names_split)):
-                workers.apply_async(BaseDataset._save_image_single_core, (proc_id, images_set, names_set, colors))
+                workers.apply_async(BaseDataset._save_image_single_core,
+                                    (proc_id, images_set, names_set, colors))
             workers.close()
             workers.join()
 
@@ -276,14 +282,21 @@ class BaseDataset(torch.utils.data.Dataset):
             gt_image_jsons = gt_jsons['images']
             gt_jsons, pred_jsons = gt_jsons['annotations'], pred_jsons['annotations']
             cpu_num = multiprocessing.cpu_count()
-            gt_jsons_split, pred_jsons_split = np.array_split(gt_jsons, cpu_num), np.array_split(pred_jsons, cpu_num)
-            gt_pans_split, pred_pans_split = np.array_split(gt_pans, cpu_num), np.array_split(pred_pans, cpu_num)
+            gt_jsons_split, pred_jsons_split = np.array_split(gt_jsons, cpu_num), np.array_split(
+                pred_jsons, cpu_num)
+            gt_pans_split, pred_pans_split = np.array_split(gt_pans, cpu_num), np.array_split(
+                pred_pans, cpu_num)
             gt_image_jsons_split = np.array_split(gt_image_jsons, cpu_num)
 
             workers = multiprocessing.Pool(processes=cpu_num)
             processes = []
-            for proc_id, (gt_jsons_set, pred_jsons_set, gt_pans_set, pred_pans_set, gt_image_jsons_set) in enumerate(zip(gt_jsons_split, pred_jsons_split, gt_pans_split, pred_pans_split, gt_image_jsons_split)):
-                p = workers.apply_async(BaseDataset._pq_compute_single_core, (proc_id, gt_jsons_set, pred_jsons_set, gt_pans_set, pred_pans_set, gt_image_jsons_set, categories))
+            for proc_id, (gt_jsons_set, pred_jsons_set, gt_pans_set, pred_pans_set,
+                          gt_image_jsons_set) in enumerate(
+                zip(gt_jsons_split, pred_jsons_split, gt_pans_split, pred_pans_split,
+                    gt_image_jsons_split)):
+                p = workers.apply_async(BaseDataset._pq_compute_single_core, (
+                    proc_id, gt_jsons_set, pred_jsons_set, gt_pans_set, pred_pans_set,
+                    gt_image_jsons_set, categories))
                 processes.append(p)
             workers.close()
             workers.join()
@@ -298,20 +311,49 @@ class BaseDataset(torch.utils.data.Dataset):
                     results['per_class'] = per_class_results
 
             if logger:
-                logger.info("{:10s}| {:>5s}  {:>5s}  {:>5s} {:>5s}".format("", "PQ", "SQ", "RQ", "N"))
+                logger.info(
+                    "{:10s}| {:>5s}  {:>5s}  {:>5s} {:>5s}".format("", "PQ", "SQ", "RQ", "N"))
                 logger.info("-" * (10 + 7 * 4))
                 for name, _isthing in metrics:
-                    logger.info("{:10s}| {:5.1f}  {:5.1f}  {:5.1f} {:5d}".format(name, 100 * results[name]['pq'], 100 * results[name]['sq'], 100 * results[name]['rq'], results[name]['n']))
+                    logger.info("{:10s}| {:5.1f}  {:5.1f}  {:5.1f} {:5d}".format(name, 100 *
+                                                                                 results[name][
+                                                                                     'pq'], 100 *
+                                                                                 results[name][
+                                                                                     'sq'], 100 *
+                                                                                 results[name][
+                                                                                     'rq'],
+                                                                                 results[name][
+                                                                                     'n']))
 
-                logger.info("{:4s}| {:>5s} {:>5s} {:>5s} {:>6s} {:>7s} {:>7s} {:>7s}".format("IDX", "PQ", "SQ", "RQ", "IoU", "TP", "FP", "FN"))
+                logger.info(
+                    "{:4s}| {:>5s} {:>5s} {:>5s} {:>6s} {:>7s} {:>7s} {:>7s}".format("IDX", "PQ",
+                                                                                     "SQ", "RQ",
+                                                                                     "IoU", "TP",
+                                                                                     "FP", "FN"))
                 for idx, result in results['per_class'].items():
-                    logger.info("{:4d} | {:5.1f} {:5.1f} {:5.1f} {:6.1f} {:7d} {:7d} {:7d}".format(idx, 100 * result['pq'], 100 * result['sq'], 100 * result['rq'], result['iou'], result['tp'],
-                                                                                             result['fp'], result['fn']))
+                    logger.info(
+                        "{:4d} | {:5.1f} {:5.1f} {:5.1f} {:6.1f} {:7d} {:7d} {:7d}".format(idx,
+                                                                                           100 *
+                                                                                           result[
+                                                                                               'pq'],
+                                                                                           100 *
+                                                                                           result[
+                                                                                               'sq'],
+                                                                                           100 *
+                                                                                           result[
+                                                                                               'rq'],
+                                                                                           result[
+                                                                                               'iou'],
+                                                                                           result[
+                                                                                               'tp'],
+                                                                                           result[
+                                                                                               'fp'],
+                                                                                           result[
+                                                                                               'fn']))
 
             t_delta = time.time() - start_time
             print("Time elapsed: {:0.2f} seconds".format(t_delta))
             return results
-
 
         # if eval for test-dev, since there is no gt we simply retrieve image names from image_info json files
         # with open(self.panoptic_json_file, 'r') as f:
@@ -319,7 +361,7 @@ class BaseDataset(torch.utils.data.Dataset):
         #     gt_json['images'] = sorted(gt_json['images'], key=lambda x: x['id'])
         # other wise:
         gt_pans, gt_json, categories, color_gererator = get_gt()
-        
+
         pred_pans, pred_json = get_pred(pred_pans_2ch, color_gererator)
         save_image(pred_pans_2ch, os.path.join(output_dir, 'pan_2ch'), gt_json)
         save_image(pred_pans, os.path.join(output_dir, 'pan'), gt_json)
@@ -352,7 +394,7 @@ class BaseDataset(torch.utils.data.Dataset):
                 else:
                     if np.max(cnt) / np.sum(cnt) >= 0.5 and cls[np.argmax(cnt)] <= id_last_stuff:
                         pan_seg[region] = cls[np.argmax(cnt)]
-                        pan_ins[region] = 0 
+                        pan_ins[region] = 0
                     else:
                         pan_seg[region] = cls_ind[id - id_last_stuff - 1] + id_last_stuff
                         pan_ins[region] = idx + 1
@@ -370,16 +412,17 @@ class BaseDataset(torch.utils.data.Dataset):
             pred_pans_2ch.append(pan_2ch)
         return pred_pans_2ch
 
-    def get_combined_pan_result(self, segs, boxes, masks, score_threshold=0.6, fraction_threshold=0.7, stuff_area_limit=4*64*64):
+    def get_combined_pan_result(self, segs, boxes, masks, score_threshold=0.6,
+                                fraction_threshold=0.7, stuff_area_limit=4 * 64 * 64):
         # suppose ins masks are already sorted in descending order by scores
         boxes_all, masks_all, cls_idxs_all = [], [], []
         boxes_all = []
         import itertools
-        import time
         for i in range(len(segs)):
             boxes_i = np.vstack([boxes[j][i] for j in range(1, len(boxes))])
             masks_i = np.array(list(itertools.chain(*[masks[j][i] for j in range(1, len(masks))])))
-            cls_idxs_i = np.hstack([np.array([j for _ in boxes[j][i]]).astype(np.int32) for j in range(1, len(boxes))])
+            cls_idxs_i = np.hstack(
+                [np.array([j for _ in boxes[j][i]]).astype(np.int32) for j in range(1, len(boxes))])
             sorted_idxs = np.argsort(boxes_i[:, 4])[::-1]
             boxes_all.append(boxes_i[sorted_idxs])
             masks_all.append(masks_i[sorted_idxs])
@@ -392,8 +435,11 @@ class BaseDataset(torch.utils.data.Dataset):
         segs_split = np.array_split(segs, cpu_num)
         workers = multiprocessing.Pool(processes=cpu_num)
         processes = []
-        for proc_id, (boxes_set, cls_idxs_set, masks_set, sems_set) in enumerate(zip(boxes_split, cls_idxs_split, masks_split, segs_split)):
-            p = workers.apply_async(BaseDataset._merge_pred_single_core, (proc_id, boxes_set, cls_idxs_set, masks_set, sems_set, score_threshold, fraction_threshold, stuff_area_limit))
+        for proc_id, (boxes_set, cls_idxs_set, masks_set, sems_set) in enumerate(
+                zip(boxes_split, cls_idxs_split, masks_split, segs_split)):
+            p = workers.apply_async(BaseDataset._merge_pred_single_core, (
+                proc_id, boxes_set, cls_idxs_set, masks_set, sems_set, score_threshold,
+                fraction_threshold, stuff_area_limit))
             processes.append(p)
         workers.close()
         workers.join()
@@ -403,13 +449,16 @@ class BaseDataset(torch.utils.data.Dataset):
         return pan_2ch_all
 
     @staticmethod
-    def _merge_pred_single_core(proc_id, boxes_set, cls_idxs_set, masks_set, sems_set, score_threshold, fraction_threshold, stuff_area_limit):
+    def _merge_pred_single_core(proc_id, boxes_set, cls_idxs_set, masks_set, sems_set,
+                                score_threshold, fraction_threshold, stuff_area_limit):
         from pycocotools.mask import decode as mask_decode
         pan_2ch_all = []
         id_last_stuff = config.dataset.num_seg_classes - config.dataset.num_classes
 
         for idx_outer in range(len(boxes_set)):
-            boxes, scores, cls_idxs, masks = boxes_set[idx_outer][:, :4], boxes_set[idx_outer][:, 4], cls_idxs_set[idx_outer], masks_set[idx_outer]
+            boxes, scores, cls_idxs, masks = boxes_set[idx_outer][:, :4], boxes_set[idx_outer][:,
+                                                                          4], cls_idxs_set[
+                                                 idx_outer], masks_set[idx_outer]
             sem = sems_set[idx_outer]
             h, w = sem.shape
             ins_mask = np.zeros((h, w), dtype=np.uint8)
@@ -421,7 +470,9 @@ class BaseDataset(torch.utils.data.Dataset):
                     continue
                 mask = mask_decode(masks[idx_inner])
                 ins_remain = (mask == 1) & (ins_mask == 0)
-                if (mask.astype(np.float32).sum() == 0) or (ins_remain.astype(np.float32).sum() / mask.astype(np.float32).sum() < fraction_threshold):
+                if (mask.astype(np.float32).sum() == 0) or (
+                        ins_remain.astype(np.float32).sum() / mask.astype(
+                    np.float32).sum() < fraction_threshold):
                     continue
                 idx_ins_array[cls_idx - 1] += 1
                 ins_mask[ins_remain] = idx_ins_array[cls_idx - 1]
@@ -438,7 +489,8 @@ class BaseDataset(torch.utils.data.Dataset):
             pan_2ch = np.zeros((h, w, 3), dtype=np.uint8)
             pan_2ch_c0 = sem.copy()
             pan_2ch_c1 = ins_mask.copy()
-            conflict = (sem > id_last_stuff) & (ins_mask == 0)  # sem treat as thing while ins treat as stuff
+            conflict = (sem > id_last_stuff) & (
+                    ins_mask == 0)  # sem treat as thing while ins treat as stuff
             pan_2ch_c0[conflict] = 255
             insistence = (ins_mask != 0)  # change sem region to ins thing region
             pan_2ch_c0[insistence] = ins_sem[insistence] + id_last_stuff
@@ -461,7 +513,9 @@ class BaseDataset(torch.utils.data.Dataset):
 
     @staticmethod
     def _converter_2ch_single_core(proc_id, pan_2ch_set, color_gererator):
-        sys.path.insert(0, os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', 'lib', 'dataset_devkit'))
+        sys.path.insert(0,
+                        os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', 'lib',
+                                     'dataset_devkit'))
         from panopticapi.utils import rgb2id
         OFFSET = 1000
         VOID = 255
@@ -488,7 +542,9 @@ class BaseDataset(torch.utils.data.Dataset):
                 y = index[0].min()
                 width = index[1].max() - x
                 height = index[0].max() - y
-                segm_info.append({"category_id": sem.item(), "iscrowd": 0, "id": int(rgb2id(color)), "bbox": [x.item(), y.item(), width.item(), height.item()], "area": mask.sum().item()})
+                segm_info.append({"category_id": sem.item(), "iscrowd": 0, "id": int(rgb2id(color)),
+                                  "bbox": [x.item(), y.item(), width.item(), height.item()],
+                                  "area": mask.sum().item()})
             annotations.append({"segments_info": segm_info})
             if vis_panoptic:
                 pan_format = Image.fromarray(pan_format)
@@ -499,7 +555,8 @@ class BaseDataset(torch.utils.data.Dataset):
                         continue
                     if color_gererator.categories[sem]['isthing'] and el % OFFSET != 0:
                         mask = ((pan == el) * 255).astype(np.uint8)
-                        _, contour, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+                        _, contour, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL,
+                                                         cv2.CHAIN_APPROX_NONE)
                         for c in contour:
                             c = c.reshape(-1).tolist()
                             if len(c) < 4:
@@ -511,11 +568,13 @@ class BaseDataset(torch.utils.data.Dataset):
         return annotations, pan_all
 
     @staticmethod
-    def _pq_compute_single_core(proc_id, gt_jsons_set, pred_jsons_set, gt_pans_set, pred_pans_set, gt_image_jsons_set, categories):
+    def _pq_compute_single_core(proc_id, gt_jsons_set, pred_jsons_set, gt_pans_set, pred_pans_set,
+                                gt_image_jsons_set, categories):
         OFFSET = 256 * 256 * 256
         VOID = 0
         pq_stat = PQStat()
-        for idx, (gt_json, pred_json, gt_pan, pred_pan, gt_image_json) in enumerate(zip(gt_jsons_set, pred_jsons_set, gt_pans_set, pred_pans_set, gt_image_jsons_set)):
+        for idx, (gt_json, pred_json, gt_pan, pred_pan, gt_image_json) in enumerate(
+                zip(gt_jsons_set, pred_jsons_set, gt_pans_set, pred_pans_set, gt_image_jsons_set)):
             # if idx % 100 == 0:
             #     logger.info('Compute pq -> Core: {}, {} from {} images processed'.format(proc_id, idx, len(gt_jsons_set)))
             gt_pan, pred_pan = np.uint32(gt_pan), np.uint32(pred_pan)
@@ -532,14 +591,19 @@ class BaseDataset(torch.utils.data.Dataset):
                 if label not in pred_segms:
                     if label == VOID:
                         continue
-                    raise KeyError('In the image with ID {} segment with ID {} is presented in PNG and not presented in JSON.'.format(gt_ann['image_id'], label))
+                    raise KeyError(
+                        'In the image with ID {} segment with ID {} is presented in PNG and not presented in JSON.'.format(
+                            gt_ann['image_id'], label))
                 pred_segms[label]['area'] = label_cnt
                 pred_labels_set.remove(label)
                 if pred_segms[label]['category_id'] not in categories:
-                    raise KeyError('In the image with ID {} segment with ID {} has unknown category_id {}.'.format(gt_ann['image_id'], label, pred_segms[label]['category_id']))
+                    raise KeyError(
+                        'In the image with ID {} segment with ID {} has unknown category_id {}.'.format(
+                            gt_ann['image_id'], label, pred_segms[label]['category_id']))
             if len(pred_labels_set) != 0:
                 raise KeyError(
-                    'In the image with ID {} the following segment IDs {} are presented in JSON and not presented in PNG.'.format(gt_ann['image_id'], list(pred_labels_set)))
+                    'In the image with ID {} the following segment IDs {} are presented in JSON and not presented in PNG.'.format(
+                        gt_ann['image_id'], list(pred_labels_set)))
 
             # confusion matrix calculation
             pan_gt_pred = pan_gt.astype(np.uint64) * OFFSET + pan_pred.astype(np.uint64)
@@ -568,7 +632,8 @@ class BaseDataset(torch.utils.data.Dataset):
                 if gt_segms[gt_label]['category_id'] != pred_segms[pred_label]['category_id']:
                     continue
 
-                union = pred_segms[pred_label]['area'] + gt_segms[gt_label]['area'] - intersection - gt_pred_map.get(
+                union = pred_segms[pred_label]['area'] + gt_segms[gt_label][
+                    'area'] - intersection - gt_pred_map.get(
                     (VOID, pred_label), 0)
                 iou = intersection / union
                 if iou > 0.5:
@@ -598,7 +663,8 @@ class BaseDataset(torch.utils.data.Dataset):
                 intersection = gt_pred_map.get((VOID, pred_label), 0)
                 # plus intersection with corresponding CROWD region if it exists
                 if pred_info['category_id'] in crowd_labels_dict:
-                    intersection += gt_pred_map.get((crowd_labels_dict[pred_info['category_id']], pred_label), 0)
+                    intersection += gt_pred_map.get(
+                        (crowd_labels_dict[pred_info['category_id']], pred_label), 0)
                 # predicted segment is ignored if more than half of the segment correspond to VOID and CROWD regions
                 if intersection / pred_info['area'] > 0.5:
                     continue
@@ -836,7 +902,6 @@ class BaseDataset(torch.utils.data.Dataset):
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
         from matplotlib.patches import Polygon
-        import random
         import cv2
         from lib.utils.colormap import colormap
 
@@ -873,26 +938,32 @@ class BaseDataset(torch.utils.data.Dataset):
                         plt.Rectangle((bbox[0], bbox[1]), bbox[2] - bbox[0], bbox[3] - bbox[1],
                                       fill=False, edgecolor='g', linewidth=1, alpha=0.5)
                     )
-                    ax.text(bbox[0], bbox[1] - 2, name + '{:0.2f}'.format(score).lstrip('0'), fontsize=5, family='serif',
-                            bbox=dict(facecolor='g', alpha=0.4, pad=0, edgecolor='none'), color='white')
+                    ax.text(bbox[0], bbox[1] - 2, name + '{:0.2f}'.format(score).lstrip('0'),
+                            fontsize=5, family='serif',
+                            bbox=dict(facecolor='g', alpha=0.4, pad=0, edgecolor='none'),
+                            color='white')
                     color_mask = color_list[mask_color_id % len(color_list), 0:3]
                     mask_color_id += 1
                     w_ratio = .4
                     for c in range(3):
                         color_mask[c] = color_mask[c] * (1 - w_ratio) + w_ratio
 
-                    _, contour, hier = cv2.findContours(mask.copy(), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+                    _, contour, hier = cv2.findContours(mask.copy(), cv2.RETR_CCOMP,
+                                                        cv2.CHAIN_APPROX_NONE)
                     for c in contour:
                         ax.add_patch(
                             Polygon(
                                 c.reshape((-1, 2)),
-                                fill=True, facecolor=color_mask, edgecolor='w', linewidth=0.8, alpha=0.5
+                                fill=True, facecolor=color_mask, edgecolor='w', linewidth=0.8,
+                                alpha=0.5
                             )
                         )
             if save_path is None:
                 plt.show()
             else:
-                fig.savefig(os.path.join(save_path, '{}.png'.format(self.roidb[i]['image'].split('/')[-1])), dpi=200)
+                fig.savefig(
+                    os.path.join(save_path, '{}.png'.format(self.roidb[i]['image'].split('/')[-1])),
+                    dpi=200)
             plt.close('all')
 
     def im_list_to_blob(self, ims, scale=1):
@@ -916,7 +987,11 @@ class BaseDataset(torch.utils.data.Dataset):
         blob = np.zeros((num_images, 3, int(max_shape[1] * scale), int(max_shape[2] * scale)),
                         dtype=np.float32)
         for i in range(num_images):
-            im = ims[i] if scale == 1 else cv2.resize(ims[i].transpose(1, 2, 0), None, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1)
+            im = ims[i] if scale == 1 else cv2.resize(ims[i].transpose(1, 2, 0), None, None,
+                                                      fx=scale, fy=scale,
+                                                      interpolation=cv2.INTER_LINEAR).transpose(2,
+                                                                                                0,
+                                                                                                1)
             blob[i, :, 0:im.shape[1], 0:im.shape[2]] = im
         # Move channels (axis 3) to axis 1
         # Axis order will become: (batch elem, channel, height, width)
@@ -942,7 +1017,8 @@ class BaseDataset(torch.utils.data.Dataset):
                        dtype=np.int64) * 255
         im = ims[0]
         for i in range(num_images):
-            new_im = im[i] if scale == 1 else cv2.resize(im[i], None, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+            new_im = im[i] if scale == 1 else cv2.resize(im[i], None, None, fx=scale, fy=scale,
+                                                         interpolation=cv2.INTER_NEAREST)
             blob[i, 0:new_im.shape[0], 0:new_im.shape[1]] = new_im
         # Move channels (axis 3) to axis 1
         # Axis order will become: (batch elem, channel, height, width)
@@ -962,25 +1038,32 @@ class BaseDataset(torch.utils.data.Dataset):
         blob = {}
         for key in batch[0]:
             if key == 'data':
-                blob.update({'data': torch.from_numpy(self.im_list_to_blob([b['data'] for b in batch]))})
+                blob.update(
+                    {'data': torch.from_numpy(self.im_list_to_blob([b['data'] for b in batch]))})
                 if config.network.has_panoptic_head:
-                    blob.update({'data_4x': torch.from_numpy(self.im_list_to_blob([b['data'] for b in batch], scale=1/4.))})
+                    blob.update({'data_4x': torch.from_numpy(
+                        self.im_list_to_blob([b['data'] for b in batch], scale=1 / 4.))})
             elif key == 'seg_gt':
-                blob.update({'seg_gt': torch.from_numpy(self.gt_list_to_blob([b['seg_gt'][np.newaxis, ...] for b in batch]))})
+                blob.update({'seg_gt': torch.from_numpy(
+                    self.gt_list_to_blob([b['seg_gt'][np.newaxis, ...] for b in batch]))})
                 if config.network.has_panoptic_head:
-                    blob.update({'seg_gt_4x': torch.from_numpy(self.gt_list_to_blob([b['seg_gt'][np.newaxis, ...] for b in batch], scale=1/4.))})
+                    blob.update({'seg_gt_4x': torch.from_numpy(
+                        self.gt_list_to_blob([b['seg_gt'][np.newaxis, ...] for b in batch],
+                                             scale=1 / 4.))})
             elif key == 'seg_roi_gt':
-                assert(len(batch) == 1)
+                assert (len(batch) == 1)
                 blob.update({'seg_roi_gt': torch.from_numpy(batch[0]['seg_roi_gt'])})
             elif key == 'mask_gt':
-                blob.update({'mask_gt': torch.from_numpy(self.gt_list_to_blob([b['mask_gt'] for b in batch], scale=1./4))})
+                blob.update({'mask_gt': torch.from_numpy(
+                    self.gt_list_to_blob([b['mask_gt'] for b in batch], scale=1. / 4))})
             elif key == 'im_info':
                 blob.update({'im_info': np.vstack([b['im_info'] for b in batch])})
             elif key == 'roidb':
                 assert len(batch) == 1
                 blob.update({'roidb': batch[0]['roidb']})
             elif key == 'id':
-                blob.update({key: torch.cat([torch.from_numpy(np.array([b[key]])) for b in batch], 0)})
+                blob.update(
+                    {key: torch.cat([torch.from_numpy(np.array([b[key]])) for b in batch], 0)})
             elif key == 'incidence_mat' or key == 'msg_adj':
                 blob.update({key: batch[0][key]})
             else:
