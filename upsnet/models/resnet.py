@@ -322,7 +322,6 @@ class ResNetBackbone(nn.Module):
         self.with_dconv = config.network.backbone_with_dconv
         self.freeze_at = config.network.backbone_freeze_at
 
-
         self.conv1 = conv1(requires_grad=False)
         self.res2 = res_block(64, blocks[0], fix_bn=self.fix_bn)
         self.res3 = res_block(128, blocks[1], block=DCNBottleneck if self.with_dconv <= 3 else Bottleneck,
