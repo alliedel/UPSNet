@@ -332,24 +332,9 @@ class BaseDataset(torch.utils.data.Dataset):
                                                                                      "FP", "FN"))
                 for idx, result in results['per_class'].items():
                     logger.info(
-                        "{:4d} | {:5.1f} {:5.1f} {:5.1f} {:6.1f} {:7d} {:7d} {:7d}".format(idx,
-                                                                                           100 *
-                                                                                           result[
-                                                                                               'pq'],
-                                                                                           100 *
-                                                                                           result[
-                                                                                               'sq'],
-                                                                                           100 *
-                                                                                           result[
-                                                                                               'rq'],
-                                                                                           result[
-                                                                                               'iou'],
-                                                                                           result[
-                                                                                               'tp'],
-                                                                                           result[
-                                                                                               'fp'],
-                                                                                           result[
-                                                                                               'fn']))
+                        "{:4d} | {:5.1f} {:5.1f} {:5.1f} {:6.1f} {:7d} {:7d} {:7d}".format(
+                            idx, 100 * result['pq'], 100 * result['sq'],
+                                 100 * result['rq'], result['iou'], result['tp'], result['fp'], result['fn']))
 
             t_delta = time.time() - start_time
             print("Time elapsed: {:0.2f} seconds".format(t_delta))
@@ -576,7 +561,8 @@ class BaseDataset(torch.utils.data.Dataset):
         for idx, (gt_json, pred_json, gt_pan, pred_pan, gt_image_json) in enumerate(
                 zip(gt_jsons_set, pred_jsons_set, gt_pans_set, pred_pans_set, gt_image_jsons_set)):
             # if idx % 100 == 0:
-            #     logger.info('Compute pq -> Core: {}, {} from {} images processed'.format(proc_id, idx, len(gt_jsons_set)))
+            #     logger.info('Compute pq -> Core: {}, {} from {} images processed'.format(proc_id, idx,
+            #     len(gt_jsons_set)))
             gt_pan, pred_pan = np.uint32(gt_pan), np.uint32(pred_pan)
             pan_gt = gt_pan[:, :, 0] + gt_pan[:, :, 1] * 256 + gt_pan[:, :, 2] * 256 * 256
             pan_pred = pred_pan[:, :, 0] + pred_pan[:, :, 1] * 256 + pred_pan[:, :, 2] * 256 * 256
@@ -592,7 +578,8 @@ class BaseDataset(torch.utils.data.Dataset):
                     if label == VOID:
                         continue
                     raise KeyError(
-                        'In the image with ID {} segment with ID {} is presented in PNG and not presented in JSON.'.format(
+                        'In the image with ID {} segment with ID {} is presented in PNG and not presented in '
+                        'JSON.'.format(
                             gt_ann['image_id'], label))
                 pred_segms[label]['area'] = label_cnt
                 pred_labels_set.remove(label)
@@ -602,7 +589,8 @@ class BaseDataset(torch.utils.data.Dataset):
                             gt_ann['image_id'], label, pred_segms[label]['category_id']))
             if len(pred_labels_set) != 0:
                 raise KeyError(
-                    'In the image with ID {} the following segment IDs {} are presented in JSON and not presented in PNG.'.format(
+                    'In the image with ID {} the following segment IDs {} are presented in JSON and not presented in '
+                    'PNG.'.format(
                         gt_ann['image_id'], list(pred_labels_set)))
 
             # confusion matrix calculation

@@ -36,7 +36,6 @@ from upsnet.config.parse_args import parse_args
 from lib.utils.logging import create_logger
 from lib.utils.timer import Timer
 
-
 args = parse_args()
 logger, final_output_path = create_logger(config.output_path, args.cfg, config.dataset.test_image_set)
 
@@ -52,8 +51,8 @@ cv2.ocl.setUseOpenCL(False)
 cudnn.enabled = True
 cudnn.benchmark = False
 
-def im_detect(output_all, data, im_infos):
 
+def im_detect(output_all, data, im_infos):
     scores_all = []
     pred_boxes_all = []
     pred_masks_all = []
@@ -93,14 +92,12 @@ def im_detect(output_all, data, im_infos):
 
 
 def im_post(boxes_all, masks_all, scores, pred_boxes, pred_masks, cls_inds, num_classes, im_info):
-
     cls_segms = [[] for _ in range(num_classes)]
     mask_ind = 0
 
     M = config.network.mask_size
 
     scale = (M + 2.0) / M
-
 
     ref_boxes = expand_boxes(pred_boxes, scale)
     ref_boxes = ref_boxes.astype(np.int32)
@@ -153,7 +150,6 @@ def im_post(boxes_all, masks_all, scores, pred_boxes, pred_masks, cls_inds, num_
 
 
 def upsnet_test():
-
     pprint.pprint(config)
     logger.info('test config:{}\n'.format(pprint.pformat(config)))
 
@@ -165,33 +161,46 @@ def upsnet_test():
     test_dataset = eval(config.dataset.dataset)(image_sets=config.dataset.test_image_set.split('+'), flip=False,
                                                 result_path=final_output_path, phase='test')
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=config.test.batch_size, shuffle=False,
-                                              num_workers=0, drop_last=False, pin_memory=False, collate_fn=test_dataset.collate)
+                                              num_workers=0, drop_last=False, pin_memory=False,
+                                              collate_fn=test_dataset.collate)
 
     if args.eval_only:
         results = pickle.load(open(os.path.join(final_output_path, 'results', 'results_list.pkl'), 'rb'))
-        if config.test.vis_mask:
-            test_dataset.vis_all_mask(results['all_boxes'], results['all_masks'], os.path.join(final_output_path, 'results', 'vis'))
+        if config.network.has_panoptic_head:
+            logging.info('unified pano result:')
+            import ipdb; ipdb.set_trace()
+            pano_results = test_dataset.evaluate_panoptic(
+                test_dataset.get_unified_pan_result(results['all_ssegs'], results['all_panos'],
+                                                    results['all_pano_cls_inds'],
+                                                    stuff_area_limit=config.test.panoptic_stuff_area_limit),
+                os.path.join(final_output_path, 'results', 'pans_unified'))
+            with open(os.path.join(final_output_path, 'results', 'my_pano_results.pkl'), 'wb') as fo:
+                pickle.dump(pano_results, fo)
+        if config.test.vis_mask and args.vis_mask:
+            test_dataset.vis_all_mask(results['all_boxes'], results['all_masks'],
+                                      os.path.join(final_output_path, 'results', 'vis'))
         if config.network.has_rcnn:
             test_dataset.evaluate_boxes(results['all_boxes'], os.path.join(final_output_path, 'results'))
         if config.network.has_mask_head:
-            test_dataset.evaluate_masks(results['all_boxes'], results['all_masks'], os.path.join(final_output_path, 'results'))
+            test_dataset.evaluate_masks(results['all_boxes'], results['all_masks'],
+                                        os.path.join(final_output_path, 'results'))
         if config.network.has_fcn_head:
             test_dataset.evaluate_ssegs(results['all_ssegs'], os.path.join(final_output_path, 'results', 'ssegs'))
             # logging.info('combined pano result:')
-            # test_dataset.evaluate_panoptic(test_dataset.get_combined_pan_result(results['all_ssegs'], results['all_boxes'], results['all_masks'], stuff_area_limit=config.test.panoptic_stuff_area_limit), os.path.join(final_output_path, 'results', 'pans_combined'))
-        if config.network.has_panoptic_head:
-            logging.info('unified pano result:')
-            test_dataset.evaluate_panoptic(test_dataset.get_unified_pan_result(results['all_ssegs'], results['all_panos'], results['all_pano_cls_inds'], stuff_area_limit=config.test.panoptic_stuff_area_limit), os.path.join(final_output_path, 'results', 'pans_unified'))
+            # test_dataset.evaluate_panoptic(test_dataset.get_combined_pan_result(results['all_ssegs'],
+            # results['all_boxes'], results['all_masks'], stuff_area_limit=config.test.panoptic_stuff_area_limit),
+            # os.path.join(final_output_path, 'results', 'pans_combined'))
         sys.exit()
 
     # preparing
     curr_iter = config.test.test_iteration
     if args.weight_path == '':
-        test_model.load_state_dict(torch.load(os.path.join(os.path.join(os.path.join(config.output_path, os.path.basename(args.cfg).split('.')[0]),
-                                   '_'.join(config.dataset.image_set.split('+')), config.model_prefix+str(curr_iter)+'.pth'))), resume=True)
+        test_model.load_state_dict(torch.load(
+            os.path.join(os.path.join(os.path.join(config.output_path, os.path.basename(args.cfg).split('.')[0]),
+                                      '_'.join(config.dataset.image_set.split('+')),
+                                      config.model_prefix + str(curr_iter) + '.pth'))), resume=True)
     else:
         test_model.load_state_dict(torch.load(args.weight_path), resume=True)
-
 
     for p in test_model.parameters():
         p.requires_grad = False
@@ -213,7 +222,6 @@ def upsnet_test():
         all_panos = []
         all_pano_cls_inds = []
         panos = []
-
 
     data_timer = Timer()
     net_timer = Timer()
@@ -252,25 +260,30 @@ def upsnet_test():
                 net_time = 0
             output = im_detect(output, batch, im_infos)
         post_timer.tic()
-        for score, box, mask, cls_idx, im_info in zip(output['scores'], output['boxes'], output['masks'], output['cls_inds'], im_infos):
-            im_post(all_boxes, all_masks, score, box, mask, cls_idx, test_dataset.num_classes, np.round(im_info[:2] / im_info[2]).astype(np.int32))
+        for score, box, mask, cls_idx, im_info in zip(output['scores'], output['boxes'], output['masks'],
+                                                      output['cls_inds'], im_infos):
+            im_post(all_boxes, all_masks, score, box, mask, cls_idx, test_dataset.num_classes,
+                    np.round(im_info[:2] / im_info[2]).astype(np.int32))
             idx += 1
         if config.network.has_fcn_head:
             for i, sseg in enumerate(output['ssegs']):
                 sseg = sseg.squeeze(0).astype('uint8')[:int(im_infos[i][0]), :int(im_infos[i][1])]
-                all_ssegs.append(cv2.resize(sseg, None, None, fx=1/im_infos[i][2], fy=1/im_infos[i][2], interpolation=cv2.INTER_NEAREST))
+                all_ssegs.append(cv2.resize(sseg, None, None, fx=1 / im_infos[i][2], fy=1 / im_infos[i][2],
+                                            interpolation=cv2.INTER_NEAREST))
         if config.network.has_panoptic_head:
             pano_cls_inds = []
             for i, (pano, cls_ind) in enumerate(zip(output['panos'], output['pano_cls_inds'])):
                 pano = pano.squeeze(0).astype('uint8')[:int(im_infos[i][0]), :int(im_infos[i][1])]
-                panos.append(cv2.resize(pano, None, None, fx=1/im_infos[i][2], fy=1/im_infos[i][2], interpolation=cv2.INTER_NEAREST))
+                panos.append(cv2.resize(pano, None, None, fx=1 / im_infos[i][2], fy=1 / im_infos[i][2],
+                                        interpolation=cv2.INTER_NEAREST))
                 pano_cls_inds.append(cls_ind)
 
             all_panos.extend(panos)
             panos = []
             all_pano_cls_inds.extend(pano_cls_inds)
         post_time = post_timer.toc()
-        s = 'Batch %d/%d, data_time:%.3f, net_time:%.3f, post_time:%.3f' % (idx, len(test_dataset), data_time, net_time, post_time)
+        s = 'Batch %d/%d, data_time:%.3f, net_time:%.3f, post_time:%.3f' % (
+        idx, len(test_dataset), data_time, net_time, post_time)
         logging.info(s)
 
     results = []
@@ -305,11 +318,15 @@ def upsnet_test():
             test_dataset.evaluate_masks(all_boxes, all_masks, os.path.join(final_output_path, 'results'))
         if config.network.has_panoptic_head:
             logging.info('unified pano result:')
-            test_dataset.evaluate_panoptic(test_dataset.get_unified_pan_result(all_ssegs, all_panos, all_pano_cls_inds, stuff_area_limit=config.test.panoptic_stuff_area_limit), os.path.join(final_output_path, 'results', 'pans_unified'))
+            test_dataset.evaluate_panoptic(test_dataset.get_unified_pan_result(
+                all_ssegs, all_panos, all_pano_cls_inds, stuff_area_limit=config.test.panoptic_stuff_area_limit),
+                os.path.join(final_output_path, 'results', 'pans_unified'))
         if config.network.has_fcn_head:
             test_dataset.evaluate_ssegs(all_ssegs, os.path.join(final_output_path, 'results', 'ssegs'))
             # logging.info('combined pano result:')
-            # test_dataset.evaluate_panoptic(test_dataset.get_combined_pan_result(all_ssegs, all_boxes, all_masks, stuff_area_limit=config.test.panoptic_stuff_area_limit), os.path.join(final_output_path, 'results', 'pans_combined'))
+            # test_dataset.evaluate_panoptic(test_dataset.get_combined_pan_result(
+            # all_ssegs, all_boxes, all_masks, stuff_area_limit=config.test.panoptic_stuff_area_limit),
+            # os.path.join(final_output_path, 'results', 'pans_combined'))
 
 
 if __name__ == "__main__":

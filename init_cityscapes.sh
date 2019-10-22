@@ -1,5 +1,7 @@
 # Download devkit
-git clone https://github.com/mcordts/cityscapesScripts lib/dataset_devkit/cityscapesScripts
+if [ ! -d lib/dataset_devkit/cityscapesScripts ]; then
+    git clone https://github.com/mcordts/cityscapesScripts lib/dataset_devkit/cityscapesScripts
+fi
 
 # Download coco format anntations
 
